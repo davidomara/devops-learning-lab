@@ -27,12 +27,11 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t ghcr.io/${{ github.repository_owner }}/hello-app:${{ github.sha }} .
+          docker build -t ghcr.io/${{ github.repository_owner }}/hello-app-hub:${{ github.sha }} .
 
       - name: Push Docker image
         run: |
-          docker push ghcr.io/${{ github.repository_owner }}/hello-app:${{ github.sha }}
-
+          docker push ghcr.io/${{ github.repository_owner }}/hello-app-hub:${{ github.sha }}
   test:
     name: Run Python App Test
     runs-on: ubuntu-latest
