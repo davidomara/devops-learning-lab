@@ -1,0 +1,114 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/hello-app-hub
+
+jobs:
+
+  # ------------------------------------------------------------
+  # 1. BUILD IMAGE + PUSH TO GHCR
+  # ------------------------------------------------------------
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Image Tags
+        id: vars
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          echo "DATE_TAG=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build image
+        run: |
+          docker build \
+            -t $IMAGE_BASE:latest \
+            -t $IMAGE_BASE:${{ steps.vars.outputs.SHORT_SHA }} \
+            -t $IMAGE_BASE:${{ steps.vars.outputs.DATE_TAG }} .
+
+      - name: Push image (all tags)
+        run: |
+          docker push $IMAGE_BASE:latest
+          docker push $IMAGE_BASE:${{ steps.vars.outputs.SHORT_SHA }}
+          docker push $IMAGE_BASE:${{ steps.vars.outputs.DATE_TAG }}
+
+    outputs:
+      sha: ${{ steps.vars.outputs.SHORT_SHA }}
+      date: ${{ steps.vars.outputs.DATE_TAG }}
+
+  # ------------------------------------------------------------
+  # 2. DEPLOY TO DEVELOPMENT AUTOMATICALLY
+  # ------------------------------------------------------------
+  deploy_dev:
+    name: Deploy to DEV
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: dev
+
+    steps:
+      - name: Deploying to DEV
+        run: |
+          echo "Deploying DEV environment..."
+          echo "Image: $IMAGE_BASE:${{ needs.build.outputs.sha }}"
+          # Example: Docker Compose on VPS or k8s apply
+          # ssh $DEV_SSH_USER@$DEV_HOST "docker pull $IMAGE_BASE:${{ needs.build.outputs.sha }} && docker compose up -d"
+
+  # ------------------------------------------------------------
+  # 3. STAGING DEPLOYMENT (MANUAL APPROVAL)
+  # ------------------------------------------------------------
+  deploy_staging:
+    name: Deploy to STAGING
+    runs-on: ubuntu-latest
+    needs: deploy_dev
+    environment:
+      name: staging
+      url: https://staging.example.com
+      # Requires manual approval inside GitHub UI
+      # Settings > Environments > staging > Require approval
+
+    steps:
+      - name: Deploying to STAGING
+        run: |
+          echo "Deploying STAGING environment..."
+          echo "Image: $IMAGE_BASE:${{ needs.build.outputs.sha }}"
+          # ssh $STAGING_SSH_USER@$STAGING_HOST "docker pull $IMAGE_BASE:${{ needs.build.outputs.sha }} && docker compose up -d"
+
+  # ------------------------------------------------------------
+  # 4. PRODUCTION DEPLOYMENT (MANUAL + PROTECTED)
+  # ------------------------------------------------------------
+  deploy_prod:
+    name: Deploy to PROD
+    runs-on: ubuntu-latest
+    needs: deploy_staging
+    environment:
+      name: prod
+      url: https://prod.example.com
+      # Protect this environment in GitHub:
+      # Settings > Environments > prod > Protection Rules
+
+    steps:
+      - name: Deploying to PRODUCTION
+        run: |
+          echo "Deploying PRODUCTION environment..."
+          echo "Image: $IMAGE_BASE:${{ needs.build.outputs.sha }}"
+          # ssh $PROD_SSH_USER@$PROD_HOST "docker pull $IMAGE_BASE:${{ needs.build.outputs.sha }} && docker compose up -d"
