@@ -10,11 +10,11 @@ env:
 
 jobs:
 
-  # ------------------------------------------------------------
-  # 1. BUILD IMAGE + PUSH TO GHCR
-  # ------------------------------------------------------------
+  # -----------------------------
+  # 1. BUILD & ARTIFACT EXPORT
+  # -----------------------------
   build:
-    name: Build & Push Image
+    name: Build Image
     runs-on: ubuntu-latest
 
     permissions:
@@ -22,14 +22,18 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set Image Tags
+      - name: Set Image Tag
         id: vars
-        run: |
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          echo "DATE_TAG=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+        run: echo "${GITHUB_SHA::7}" > image_tag.txt
+
+      - name: Upload tag artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image_tag
+          path: image_tag.txt
+          retention-days: 7
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -38,77 +42,101 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Build image
+      - name: Build Docker image
         run: |
-          docker build \
-            -t $IMAGE_BASE:latest \
-            -t $IMAGE_BASE:${{ steps.vars.outputs.SHORT_SHA }} \
-            -t $IMAGE_BASE:${{ steps.vars.outputs.DATE_TAG }} .
+          TAG=$(cat image_tag.txt)
+          docker build -t $IMAGE_BASE:$TAG .
 
-      - name: Push image (all tags)
+      - name: Push Docker image
         run: |
-          docker push $IMAGE_BASE:latest
-          docker push $IMAGE_BASE:${{ steps.vars.outputs.SHORT_SHA }}
-          docker push $IMAGE_BASE:${{ steps.vars.outputs.DATE_TAG }}
+          TAG=$(cat image_tag.txt)
+          docker push $IMAGE_BASE:$TAG
 
-    outputs:
-      sha: ${{ steps.vars.outputs.SHORT_SHA }}
-      date: ${{ steps.vars.outputs.DATE_TAG }}
-
-  # ------------------------------------------------------------
-  # 2. DEPLOY TO DEVELOPMENT AUTOMATICALLY
-  # ------------------------------------------------------------
-  deploy_dev:
-    name: Deploy to DEV
+  # -----------------------------
+  # 2. TEST (DOWNLOAD ARTIFACT)
+  # -----------------------------
+  test:
+    name: Test App
     runs-on: ubuntu-latest
     needs: build
-    environment:
-      name: dev
 
     steps:
-      - name: Deploying to DEV
-        run: |
-          echo "Deploying DEV environment..."
-          echo "Image: $IMAGE_BASE:${{ needs.build.outputs.sha }}"
-          # Example: Docker Compose on VPS or k8s apply
-          # ssh $DEV_SSH_USER@$DEV_HOST "docker pull $IMAGE_BASE:${{ needs.build.outputs.sha }} && docker compose up -d"
+      - uses: actions/checkout@v4
 
-  # ------------------------------------------------------------
-  # 3. STAGING DEPLOYMENT (MANUAL APPROVAL)
-  # ------------------------------------------------------------
+      - name: Download tag artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_tag
+
+      - name: Show the tag
+        run: |
+          TAG=$(cat image_tag.txt)
+          echo "TAG from artifact: $TAG"
+
+      - name: Run tests
+        run: |
+          echo "Running tests..."
+          python app/app.py
+
+  # -----------------------------
+  # 3. DEPLOY DEV
+  # -----------------------------
+  deploy_dev:
+    name: Deploy DEV
+    runs-on: ubuntu-latest
+    needs: test
+    environment: dev
+
+    steps:
+      - name: Download tag artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_tag
+
+      - name: Deploy to Dev
+        run: |
+          TAG=$(cat image_tag.txt)
+          echo "Deploying DEV with image tag: $TAG"
+          # Example deployment:
+          # ssh user@dev "docker pull $IMAGE_BASE:$TAG && docker compose up -d"
+
+  # -----------------------------
+  # 4. DEPLOY STAGING (MANUAL)
+  # -----------------------------
   deploy_staging:
-    name: Deploy to STAGING
+    name: Deploy STAGING
     runs-on: ubuntu-latest
     needs: deploy_dev
     environment:
       name: staging
-      url: https://staging.example.com
-      # Requires manual approval inside GitHub UI
-      # Settings > Environments > staging > Require approval
-
+      # Enable manual approval in GitHub UI
     steps:
-      - name: Deploying to STAGING
-        run: |
-          echo "Deploying STAGING environment..."
-          echo "Image: $IMAGE_BASE:${{ needs.build.outputs.sha }}"
-          # ssh $STAGING_SSH_USER@$STAGING_HOST "docker pull $IMAGE_BASE:${{ needs.build.outputs.sha }} && docker compose up -d"
+      - name: Download tag artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_tag
 
-  # ------------------------------------------------------------
-  # 4. PRODUCTION DEPLOYMENT (MANUAL + PROTECTED)
-  # ------------------------------------------------------------
+      - name: Deploy to Staging
+        run: |
+          TAG=$(cat image_tag.txt)
+          echo "Deploying STAGING with image tag: $TAG"
+
+  # -----------------------------
+  # 5. DEPLOY PROD (MANUAL)
+  # -----------------------------
   deploy_prod:
-    name: Deploy to PROD
+    name: Deploy PROD
     runs-on: ubuntu-latest
     needs: deploy_staging
-    environment:
-      name: prod
-      url: https://prod.example.com
-      # Protect this environment in GitHub:
-      # Settings > Environments > prod > Protection Rules
+    environment: prod
 
     steps:
-      - name: Deploying to PRODUCTION
+      - name: Download tag artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_tag
+
+      - name: Deploy to Prod
         run: |
-          echo "Deploying PRODUCTION environment..."
-          echo "Image: $IMAGE_BASE:${{ needs.build.outputs.sha }}"
-          # ssh $PROD_SSH_USER@$PROD_HOST "docker pull $IMAGE_BASE:${{ needs.build.outputs.sha }} && docker compose up -d"
+          TAG=$(cat image_tag.txt)
+          echo "Deploying PROD with image tag: $TAG"
